@@ -6,9 +6,10 @@ test_name "C100546: bolt command run should execute command on remote hosts via 
     bolt_command = "bolt command run --nodes #{nodes_csv} '#{command}'"
     case bolt['platform']
     when /windows/
-      execute_powershell_script_on(bolt, bolt_command)
+      result = execute_powershell_script_on(bolt, bolt_command)
     else
-      on(bolt, bolt_command)
+      result = on(bolt, bolt_command)
     end
+    # assert something on result
   end
 end
