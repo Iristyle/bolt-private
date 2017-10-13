@@ -73,9 +73,24 @@ function Invoke-Interpreter
   $startInfo.RedirectStandardOutput = $true
   $startInfo.RedirectStandardError = $true
 
+  $stdoutHandler = { $Event.SourceEventArgs.Data | Out-Host }
+  $stderrHandler = { Write-Error $Event.SourceEventArgs.Data }
+  $invocationId = [Guid]::NewGuid().ToString()
+  $exitedHandler = { New-Event -SourceID $invocationId }
+
   try
   {
-    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+
+    $stdoutEvent = Register-ObjectEvent -InputObject $process -EventName 'OutputDataReceived' -Action $stdoutHandler
+    $stderrEvent = Register-ObjectEvent -InputObject $process -EventName 'ErrorDataReceived' -Action $stderrHandler
+    $exitedEvent = Register-ObjectEvent -InputObject $process -EventName 'Exited' -Action $exitedHandler
+
+    $process.Start() | Out-Null
+
+    $process.BeginOutputReadLine()
+    $process.BeginErrorReadLine()
   }
   catch
   {
@@ -92,10 +107,22 @@ function Invoke-Interpreter
   # streams must have .ReadToEnd() called prior to process .WaitForExit()
   # to prevent deadlocks per MSDN
   # https://msdn.microsoft.com/en-us/library/system.diagnostics.process.standarderror(v=vs.110).aspx#Anchor_2
-  $process.StandardOutput.ReadToEnd() | Out-Host
-  $stderr = $process.StandardError.ReadToEnd()
-  if ($stderr) { Write-Error $stderr }
-  $process.WaitForExit($Timeout) | Out-Null
+  # $process.StandardOutput.ReadToEnd() | Out-Host
+  # $stderr = $process.StandardError.ReadToEnd()
+  # if ($stderr) { Write-Error $stderr }
+  # TODO: Just use Wait-Event
+  # $process.WaitForExit($Timeout) | Out-Null
+
+  # park current thread until the PS event is signaled upon process exit
+  $waitResult = Wait-Event -SourceIdentifier $invocationId -Timeout $Timeout
+
+  @($stdoutEvent, $stderrEvent, $exitedEvent) | % { Unregister-Event -SourceIdentifier $_.Name }
+
+  if (! ($process.HasExited))
+  {
+    $process.Kill()
+    return 1
+  }
 
   return $process.ExitCode
 }
